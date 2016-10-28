@@ -1,0 +1,792 @@
+<?php
+
+//Constantes 
+
+define("SALDO_ANTERIOR", 23);
+DEFINE("SALDO_NUEVO", 24);
+
+//-------------------------------------------------------------------------------------------|
+//-------------------------------------------------------------------------------------------|
+//  Hooks and Setup Functions
+//-------------------------------------------------------------------------------------------|
+//-------------------------------------------------------------------------------------------|
+
+  //-------------------------------------------------------------------------------------------|
+  //  Implementation of hook_menu, this provides a front-end for the importer
+  //-------------------------------------------------------------------------------------------|
+    function csvImporter_menu() {
+      $items['admin/manage/csvImporter'] = array(
+        'title' => 'Import Data from CSV File',
+        'description' => 'Import content from a <abbr title="Comma Separated Values">CSV</abbr> file.',
+        'access callback' => 'user_access',
+        'access arguments' => array('access content'),
+        'page callback' => 'csvImporter_pagecallback',
+        'type' => MENU_NORMAL_ITEM,
+      );
+      return $items ;
+    }
+  //-------------------------------------------------------------------------------------------|
+  //  End hook_menu
+  //-------------------------------------------------------------------------------------------|
+  
+//-------------------------------------------------------------------------------------------|
+//-------------------------------------------------------------------------------------------|
+//  End hooks and setup functions
+//-------------------------------------------------------------------------------------------|
+//-------------------------------------------------------------------------------------------|
+
+//-------------------------------------------------------------------------------------------|
+//  Page callback function for the menu item
+//  This just returns our $form
+//-------------------------------------------------------------------------------------------|
+
+  function csvImporter_pagecallback(){
+    $module_path = drupal_get_path('module', 'csvImporter');
+    
+    $form = drupal_get_form('csvImporter_form');
+    
+    $output = "<p>This tool will attempt to import CSV data";
+    $output .= drupal_render($form);
+    
+    return $output;
+  }
+
+//-------------------------------------------------------------------------------------------|
+//  End page callback function for the menu item
+//-------------------------------------------------------------------------------------------|
+
+
+//-------------------------------------------------------------------------------------------|
+//-------------------------------------------------------------------------------------------|
+//  Form builder, validate, and submit functions for the importer form
+//-------------------------------------------------------------------------------------------|
+//-------------------------------------------------------------------------------------------|
+  function csvImporter_form() {
+    	$form['#attributes'] = array(
+      	'enctype' => 'multipart/form-data'
+    	);
+    
+    	$form['import_table'] = array(
+    	'#type' => 'select',
+    	'#title' => t('Table'),
+    	'#description' => t('Select the table where you want to import the data'),
+    	'#options' => array(
+		'' => t('Select a table'),
+		'apunte' => t('APUNTES'),
+		'faccli' => t('FACCLI'),
+		'facpro' => t('FACPRO'),
+		'saldo' => t('SALDOS'),
+		'persona' => t('PERSONAL'),
+        ),
+        '#required' => TRUE,
+	);
+  	
+  
+	$form['csvfile'] = array( 
+	'#title' => t('CSV File'),
+        '#type'  => 'file',
+        '#description' => ($max_size = parse_size(ini_get('upload_max_filesize'))) ? t('Due to server restrictions, the <strong>maximum upload file size is !max_size</strong>. Files that exceed this size will 		be disregarded.', array('!max_size' => format_size($max_size))) : '',    
+    	) ;
+  
+	$form['import_now'] = array(
+        '#type' => 'select',
+	'#title' => t('¿Ahora?'),
+	'#description' => t(''),
+        '#options' => array(
+        1 => t('Sí'),
+        0 => t('No'),
+	),
+	'#required' => TRUE,
+	);
+
+        $form['submit'] = array(
+        '#type' => 'submit',
+        '#value' => t('Commence Import'),
+        ) ;
+
+        $form['#validate'] = array(
+        'csvImporter_validate_fileupload',
+        'csvImporter_form_validate',
+        ) ;
+
+
+	
+    return $form ;
+  }
+
+
+  function csvImporter_validate_fileupload(&$form, &$form_state) {
+    $validators = array(
+      'file_validate_extensions' => array( 'csv txt' ),
+    );
+    
+    if ( $file = file_save_upload('csvfile', $validators, "public://", FILE_EXISTS_REPLACE) ) {
+      $form_state['values']['csvupload'] = $file->destination;       
+    }
+    else {
+      form_set_error('csvImporter', t('Unable to copy upload file to !dest', array('!dest' => $destination)));
+    }      
+  }
+
+
+  function csvImporter_form_validate(&$form, &$form_state) {
+    if ( isset( $form_state['values']['csvupload'] ) ) {
+      if ( $handle = fopen($form_state['values']['csvupload'], 'r') ) {
+        $line_count = 1 ;
+        $first = TRUE ;
+        if ( $line = fgetcsv($handle, 4096, ';') ) {
+		$type = array();
+  		$type = check_plain($form_state['values']['import_table']);
+          //-------------------------------------------------------------------------------------------|
+          //  This is where you can validate aspects of the file itself, like the number of columns
+          //-------------------------------------------------------------------------------------------|
+
+            	if(count($line) != 11 && ($type == 'apunte' || $type == 'faccli' || $type == 'persona')){
+            	form_set_error('csvfile', t('This file has the incorrect number of columns. Expecting 11'));
+            	}
+		if(count($line) != 8 && $type == 'saldo'){
+            	form_set_error('csvfile', t('This file has the incorrect number of columns. Expecting 8'));
+            	}
+		if(count($line) != 12 && $type == 'facpro'){
+            	form_set_error('csvfile', t('This file has the incorrect number of columns. Expecting 12'));
+            	}
+
+          //-------------------------------------------------------------------------------------------|
+          //  End validating aspects of the CSV file
+          //-------------------------------------------------------------------------------------------|                    
+          
+        }
+        fclose($handle);
+      }
+      else {
+        form_set_error('csvfile', t('Unable to read uploaded file !filepath', array('!filepath' => $form_state['values']['csvupload'])));
+      }
+    }
+  }
+
+
+  function csvImporter_form_submit(&$form, &$form_state) {
+
+    $batch = array(
+      'title' => t('Importing CSV ...'),
+      'operations' => array(),
+      'init_message' => t('Commencing'),
+      'progress_message' => t('Processed @current out of @total.'),
+      'error_message' => t('An error occurred during processing'),
+      'finished' => 'csvImporter_import_finished',
+    ) ;
+    if ( isset( $form_state['values']['csvupload'] ) ) {
+      if ( $handle = fopen($form_state['values']['csvupload'], 'r') ) {
+        $batch['operations'][] = array('_csvImporter_remember_filename', array( $form_state['values']['csvupload'] ) ) ;
+        $line_count = 1 ;
+        $first = TRUE ;
+	$type = array();
+        $line = fgetcsv($handle, 4096, ';');
+		//Necesitamos el año para borrar el contenido actual (solo del año a actualizar).
+		$type = check_plain($form_state['values']['import_table']);
+		if ($type == 'apunte'){
+			list($day, $month, $year) = explode("/", $line[1]);
+			$year_datos="20{$year}";
+		}elseif($type == 'saldo'){
+			$year_datos = $line[7];
+			//drupal_set_message("año {$year_datos}");
+		}else{
+			$year_datos = 0;
+		}
+			  
+	  
+    switch ($type) {
+    case 'apunte':
+      $header = array('field_num_equip_apunt', 'field_fech_apunte', 'field_num_apunte', 'field_fech_intro', 'field_num_proyecto', 'field_cuenta', 'field_descrip_apunte', 'field_debe', 'field_haber', 		'field_prorrata');
+      break;
+
+    case 'faccli':
+      $header = array('field_num_equip_faccli', 'field_fech_faccli', 'field_num_faccli', 'field_descrip_faccli', 'field_nif_faccli', 'field_pryo_faccli', 'field_base_faccli', 'field_cuota_faccli', 		'field_total_faccli', 'field_t_cobrado', 'field_pte_cobro');
+      break;
+
+    case 'facpro':
+      $header = array('field_num_equip_facpro', 'field_fech_facpro', 'field_num_facpro', 'field_descrip_facpro', 'field_nif_facpro', 'field_pryo_facpro', 'field_base_facpro', 'field_cuota_facpro', 		'field_total_facpro', 'field_t_pagado', 'field_pte_pago', 'field_base_prorrata', 'field_cuota_prorrata');
+      break;
+
+    case 'saldo':
+      $header = array('field_num_equip_saldo', 'field_num_proyecto_saldo', 'field_nomb_proy', 'field_saldo_deudor', 'field_saldo_acreedor', 'field_deudor_inicial', 'field_acreedor_incial', 'field_fech_saldo');
+      break;
+
+    case 'persona':
+      $header = array('field_num_equip_persona', 'field_fech_alta', 'field_fech_baja', 'field_nombre_persona', 'field_nif_persona', 'field_titulacion_persona', 	'field_categoria_persona','field_doctor_persona','field_confidencial_persona','field_proyectos_persona','field_fecha_persona');
+      break;
+	
+    }
+	//$ahora = 1;
+	$ahora = $form_state['values']['import_now'];
+	csvImporter_get_file_data($form_state['values']['csvupload'],$type,$year_datos,$header,$ahora);
+	if($ahora == 1){
+	csvImporter_importar($type);
+	}
+        fclose($handle);
+		
+      } 
+    } 
+    batch_set($batch);
+  }
+
+//-------------------------------------------------------------------------------------------|
+//-------------------------------------------------------------------------------------------|
+//  End Form builder, validate, and submit functions for the importer form
+//-------------------------------------------------------------------------------------------|
+//-------------------------------------------------------------------------------------------|
+
+
+//-------------------------------------------------------------------------------------------|
+//-------------------------------------------------------------------------------------------|
+//  Batch API helpers
+//-------------------------------------------------------------------------------------------|
+//-------------------------------------------------------------------------------------------|
+
+  function csvImporter_import_finished($success, $results, $operations) {
+    if ( !empty($results['failed_rows']) ) {
+      $dir  = file_directory_path() . '/csvImporter/' ;
+      if ( file_check_directory( $dir, FILE_CREATE_DIRECTORY ) ) {
+        $csv_filename = 'failed_rows-'. basename($results['uploaded_filename']); // we validated extension on upload
+        $csv_filepath = $dir .'/'. $csv_filename;
+        $targs = array(
+          '!csv_url' => l(check_plain($csv_filename), $csv_filepath),
+          '%csv_filename' => $csv_filename,
+          '%csv_filepath' => $csv_filepath,
+        ) ;
+        if ( $handle = fopen($csv_filepath, 'w+') ) {
+          foreach( $results['failed_rows'] as $failed_row ) {
+            fputcsv($handle, $failed_row);
+          }
+          fclose($handle);
+          drupal_set_message(t('Some rows failed to import. You may download a CSV of these rows: !csv_url', $targs), 'error');
+        }
+        else {
+          drupal_set_message(t('Some rows failed to import, but unable to write error CSV to %csv_filepath', $targs), 'error');
+        }
+      }
+      else {
+        drupal_set_message(t('Some rows failed to import, but unable to create directory for error CSV at %csv_directory', $targs), 'error');
+      }
+    }
+    return t('The CSV import has completed.');
+  }
+  
+  
+  function _csvImporter_remember_filename($filename, &$context) {
+    $context['results']['uploaded_filename'] = $filename;
+  }
+
+//-------------------------------------------------------------------------------------------|
+//-------------------------------------------------------------------------------------------|
+//  End batch API helpers
+//-------------------------------------------------------------------------------------------|
+//-------------------------------------------------------------------------------------------|
+
+//-------------------------------------------------------------------------------------------|
+//  The important part, this is where we "do something" with an individual CSV line
+//-------------------------------------------------------------------------------------------|
+
+  function _csvImporter_import_line($line, $session_nid, &$context) {
+      
+    $context['results']['rows_imported']++;
+    $line = $cleaned_line = array_map('base64_decode', $line);
+    
+    
+    //-------------------------------------------------------------------------------------------|
+    //  Give feedback to the importer about which operation we're preforming
+    //-------------------------------------------------------------------------------------------|
+      //Show the row count by default
+      $context['message'] = t('Importing row !c', array( '!c' => $context['results']['rows_imported'] ));
+    
+      //Or, Provide some feedback about the row currently being processed
+      $context['message'] = t('Importing %title', array('%title' => $line[0]));
+    //-------------------------------------------------------------------------------------------|
+    //  End giving feedback to the importer
+    //-------------------------------------------------------------------------------------------|
+  
+    //-------------------------------------------------------------------------------------------|
+    //  This is where you would convert the line of the CSV file into a new object, be it a node, user, etc.
+    //-------------------------------------------------------------------------------------------|
+
+  
+    //-------------------------------------------------------------------------------------------|
+    //  End converting the line to a drupal object
+    //-------------------------------------------------------------------------------------------|
+    
+    //-------------------------------------------------------------------------------------------|
+    //  You can capture and report on failed lines by doing something like this
+    //-------------------------------------------------------------------------------------------|
+      if ( $line[1] == 'ROW' && $line[2] == 'FAILS' ) {
+        $context['results']['failed_rows'][] = $line ;
+      }
+    //-------------------------------------------------------------------------------------------|
+    //  End capturing and reporting on failed lines
+    //-------------------------------------------------------------------------------------------|
+  }
+
+//-------------------------------------------------------------------------------------------|
+//  End converting an individual line of the CSV into something new
+//-------------------------------------------------------------------------------------------|
+
+
+function csvImporter_get_file_data($url, $type, $year_datos,$header,$ahora) {
+
+  $data_file = file_get_contents($url);
+  $rows = explode("\n", $data_file);
+
+	
+  db_query("DELETE FROM {aicia_import_$type}");
+
+  $contador = 0;
+  $contado = 0; 
+	
+  if ($type == 'apunte'){
+  	$timestamp = db_select('field_data_field_fech_apunte','n')
+		->fields('n', array('field_fech_apunte_value','entity_id'))
+		->execute();
+	
+  	While($times = $timestamp->fetchAssoc()){
+  		$fecha = strtotime('+1 day', $times['field_fech_apunte_value']);
+  		$fecha = gmdate("d/m/Y", $fecha);
+  		list($day, $month, $year) = explode("/", $fecha);
+  		//drupal_set_message("field_data_{$times['field_fech_apunte_value']}");		
+  		if ($year==$year_datos){	
+			$nids[] = $times['entity_id'];
+			$contado = count($nids);
+  		}		
+  	}
+  }elseif($type == 'saldo'){
+	$timestamp = db_select('field_data_field_fech_saldo','n')
+		->fields('n', array('field_fech_saldo_value','entity_id'))
+		->execute();
+	
+	While($times = $timestamp->fetchAssoc()){
+		$year =  $times['field_fech_saldo_value'];
+		//drupal_set_message("saldo año {$year}");
+		
+		if ($year==$year_datos){	
+			$nids[] = $times['entity_id'];
+			$contado = count($nids);
+		}	
+		
+	}
+   }else{
+	
+      	$results = db_select('node', 'n')
+		->fields('n', array('nid'))
+		->condition('type', $type)				
+		->execute();
+	  
+    	foreach ($results as $result) {
+      		$nids[] = $result->nid;
+	  	$contado = count($nids);	
+    	}
+}
+	//drupal_set_message("contados {$contado}");
+	$operations = array();	
+	$limit = 10000;	
+	$i = 0;
+	
+	//Escogemos borrar los datos ahora si la importación se va a hacer ahora. Si no, la tarea será del cron.
+	if ($ahora==1){
+		while ($contador < $contado){
+			if ($i < $limit) {
+				$items[] = $nids[$contador];
+				$i += 1;
+			}else {
+				$operations[] = array('csvBorrar_datos', array($items, $header, $type));
+				$i = 0;
+			}
+			$contador += 1;	   
+    		}
+  
+    		$operations[] = array('csvBorrar_datos', array($items, $header, $type));
+  
+      		$batch_borrar = array(
+      		'title' => t('AICIA %name table', array('%name' => drupal_strtoupper($type))),
+      		'init_message' => t('Starting Delete...'),
+      		'progress_message' => t('Processed @current out of @total.'),
+      		'error_message' => t('There was a problem importing the file.'),
+      		'operations' => $operations,
+      		'finished' => 'csvImporter_batch_finished',
+    		);
+	
+	    	batch_set($batch_borrar);
+	
+		//csvBorrar_datos($nids, $header);
+	}
+
+  	foreach ($rows as $row) {
+    	$row = explode(";", $row);
+    	$record = new stdClass();
+    	$md5 = '';
+    	for ($i = 0; $i < count($header) ; $i++) {
+      		$key = $header[$i];
+		//if (!empty($row[$i])){
+		$value = trim(str_replace(array('"', ','), array('', '.'), $row[$i]));
+		$record->{$key} = iconv('ISO-8859-1', 'UTF-8', $value);
+		$md5 .= iconv('ISO-8859-1', 'UTF-8', $value);
+		//}
+    }
+
+    //$record->md5 = md5($md5);
+    $record->field_processed = 0;
+    
+     drupal_write_record("aicia_import_$type", $record);
+
+  }
+}
+
+//Borra los datos identificados en $nids. 
+function csvBorrar_datos($nids,$header, $type){	
+	$contador = 0;
+	$contado = count($nids);
+    if ($type != 'saldo'){
+	    while ($contador < $contado) {
+		db_delete('node_access')
+			->condition('nid',$nids[$contador])
+			->execute();
+			$contador += 1;
+		}
+
+		$contador = 0;
+		while ($contador < $contado) {
+		db_delete('node_revision')
+			->condition('nid',$nids[$contador])
+			->execute();
+		$contador += 1;
+		}
+		$contador = 0;
+		while ($contador < $contado) {
+		db_delete('node')
+			->condition('nid',$nids[$contador])
+			->execute();
+		$contador += 1;	
+		}		
+		for ($i = 0; $i < count($header); $i++){
+		$contador = 0;
+		while ($contador < $contado) {
+		db_delete("field_data_{$header[$i]}")
+			->condition('entity_id',$nids[$contador])
+			->execute();
+		$contador += 1;			
+		}
+		}		
+		for ($i = 0; $i < count($header); $i++){
+		$contador = 0;			
+		while ($contador < $contado) {
+		db_delete("field_revision_{$header[$i]}")
+			//->condition('entity_id',$nids[$contador])
+			->execute();
+		$contador += 1;			
+		}		
+        }
+	}else{
+		$tabla_update = "field_data_field_workflow_saldo";
+		db_update($tabla_update)
+			->fields(array(
+				'field_workflow_saldo_value' => SALDO_ANTERIOR
+		))
+		->execute();
+	}
+}
+
+function csvImporter_fetch_array($result) {
+  if ($result) {
+    return mysql_fetch_array($result, MYSQL_ASSOC);
+  }
+}
+
+function csvImporter_database($result) {
+  if ($result) {
+    return mysql_fetch_array($result, MYSQL_ASSOC);
+  }
+}
+
+function csvImporter_importar($type) {
+    	$operations = array();
+    	$items = array();
+    	$limit = 100;
+    	$i = 0;
+	$contador = 0;
+	
+	$regs =  db_query("SELECT * FROM {aicia_import_$type} WHERE field_processed = :processed", array(':processed' => 0));
+	
+	$contado = $regs->rowCount();
+	
+	//drupal_set_message("Lineas contadas {$contado}");
+	  
+	  while ($contador < $contado) {  
+	  $row = $regs->fetchAssoc();
+	  $contador += 1;
+		if ($i < $limit) {
+			$items[] = $row;
+			$i += 1;
+		} else {
+			$operations[] = array('csvImporter_create_nodes', array($items, $type));
+			$items = array();
+			$items[] = $row;		
+			$i = 1;
+	   }      
+    }
+	 
+	 $operations[] = array('csvImporter_create_nodes', array($items, $type));
+    
+    $batch = array(
+      'title' => t('Importing AICIA %name table', array('%name' => drupal_strtoupper($type))),
+      'init_message' => t('Starting Import...'),
+      'progress_message' => t('Processed @current out of @total.'),
+      'error_message' => t('There was a problem importing the file.'),
+      'operations' => $operations,
+      'finished' => 'csvImporter_batch_finished',
+    );
+
+    batch_set($batch);
+  }
+
+function _aicia_import_update_table($table) {
+  $result = db_query("SELECT id, nid FROM {aicia_import_$table} WHERE field_processed = -1");
+
+  //while ($row = db_fetch_object($result)) {
+	foreach ($result as $row) {
+	  $row =  (array) $row;
+    node_delete($row->nid);
+    db_query("DELETE FROM {aicia_import_$table} WHERE id = %d", $row->id);
+  }
+
+  db_query("UPDATE {aicia_import_$table} SET field_processed = -1");
+}  
+
+
+//Función que sirve para crear nodos con los apuntes que vienen en la matriz $items. Estos apuntes de $items 
+//son los almacenados en la tabla provisional de almacenamiento aicia_import_table. Es llamada por csvImporter_importar.
+function csvImporter_create_nodes($items = array(), $type = '') {
+  global $user;
+  foreach ($items as $item) {
+
+	$node = new stdClass();
+ 	$node->uid = $user->uid;
+    	$node->name = $user->name;
+    	$node->type = $type;
+	node_object_prepare($node);
+	$node->language = LANGUAGE_NONE;
+    	$node->status = 1;
+	
+	//drupal_set_message("Comprobar que se llega aquí");
+
+    	//$node->title = $type . $item['field_num_apunte'];
+	
+	//Asignamos el título($node->title) a los nodos según el tipo de fichero que vamos a importar.
+  	switch ($type) {
+    	case 'apunte':
+      		$node->title = "Apunte " . $item['field_num_apunte'];
+	  	list($day, $month, $year) = explode("/", $item['field_fech_apunte']);
+	  	$node->field_apunte_year[$node->language][0]['value'] = "$year";
+      	break;
+
+    	case 'faccli':
+      		$node->title = "Factura " . $item['field_num_faccli'];
+      	break;
+
+    	case 'facpro':
+      		$node->title = "Factura " . $item['field_num_facpro'];
+      	break;
+
+    	case 'saldo':
+      		$node->title = $item['field_nomb_proy'];
+      	break;
+
+    	case 'persona':
+      		$node->title = $item['field_nombre_persona'];
+      	break;	
+  	}
+
+  	//drupal_set_message("Descripcion {$item['field_nomb_proy']}");
+    
+    	foreach ($item as $key => $value) {
+      		if (in_array($key, array('field_fech_apunte','field_fech_intro','field_fech_faccli','field_fech_facpro','field_fech_alta','field_fech_baja'))){
+			if ($value == NULL){  
+				$value = date('d/m/Y', time());
+			}			
+			list($day, $month, $year) = explode("/", $value);
+			$value = "$month/$day/$year";
+			$node->{$key}[$node->language][0]['value'] = strtotime($value);
+      		}
+      		else if (!in_array($key, array('id', 'field_processed', 'nid', 'md5','field_proyectos_persona'))) {
+			if ($value == NULL){  
+				$value = "ND";
+			}
+       			$node->{$key}[$node->language][0]['value'] = $value;
+      		}
+		if (in_array($key, array('field_num_proyecto'))){
+			if ($value == NULL){  
+				$value = '0';
+			}
+	   		$node->{$key}[$node->language][0]['value'] = $value;	
+		}
+	}
+	
+	//En el caso de que sea un saldo tenemos que actualizar el estado para mostrar el último.
+	if ($type == 'saldo'){
+	$node->{field_workflow_saldo}[$node->language][0]['value'] = SALDO_NUEVO;
+	$proyecto_saldo = $item['field_num_proyecto_saldo'];
+	}
+	
+	//No guardar el nodo si está vacio.
+	if ((strlen($item['field_nomb_proy']) > 0)||(strlen($item['field_num_apunte']) > 0)||(strlen($item['field_num_faccli']) > 0)||(strlen($item['field_num_facpro']) > 0)||(strlen($item	['field_nombre_persona']) > 0)){
+    		$node = node_submit($node);
+    		node_save($node);
+	}
+
+	//Fijamos el campo "procesado" a 1 para indicar que el dato se ha importado.	
+	$tabla_update = "aicia_import_$type";
+	db_update($tabla_update)
+		->fields(array(
+			'field_processed' => 1,
+			'nid' => $node->nid
+		))
+		->condition('id', $item['id'])
+		->execute();
+	}
+
+  }
+//}
+
+/**
+ * Implementation of hook_cronapi()
+ */
+ // Esta configurando la funcion de más abajo aicia_import_cron para que sea ejecutado por el cron. 
+function csvImporter_cronapi($op, $job = NULL) {
+  $items['csvImport_cron'] = array(
+    'description' => t('Create imported nodes'),
+    'rule' => '0 1,2,3,4,5,6,7 * * *', // A cada hora en punto de las 1,2,3,4,5,6,7 de madrugada
+  );
+  $items['csvImport_borrar_cron'] = array(
+    'description' => t('Create imported nodes'),
+    'rule' => '0 0,9 * * *', // 1 vez a las 12 de la noche
+  );
+  return $items;
+}
+
+//Funcion que funciona con CRON para almacenar nodos de aicia_import_tables que no hayan sido procesados. Se ejecuta según las normas
+//de la funcion de arriba(cada 5 minutos). 
+
+function csvImport_cron() {
+
+$type = 'apunte';
+$importar = 0; //Bandera: 1 si existen datos en tabla apuntes con field_processed = 0;
+
+$header = array('field_num_equip_apunt', 'field_fech_apunte', 'field_num_apunte', 'field_fech_intro', 'field_num_proyecto', 'field_cuenta', 'field_descrip_apunte', 'field_debe', 'field_haber', 'field_prorrata');
+  
+$infotabla = db_select('aicia_import_apunte','n')
+	->fields('n', array('field_fech_apunte','field_processed'))
+	->execute();
+//$info = $infotabla->fetchAssoc();
+	
+While($info = $infotabla->fetchAssoc()){
+	if($info['field_processed']==0){
+		$importar = $importar +1;
+	}
+}
+	
+if($importar){
+	$timestamp = db_select('field_data_field_fech_apunte','n')
+			->fields('n', array('field_fech_apunte_value','entity_id'))
+		->execute();
+					
+	list($dayin, $monthin, $yearin) = explode("/", $info['field_fech_apunte']);
+	$year_ingresar="20{$yearin}";
+	
+	//$nids[] = array();
+	While($times = $timestamp->fetchAssoc()){
+		$fecha = strtotime('+1 day', $times['field_fech_apunte_value']);
+		$fecha = gmdate("d/m/Y", $fecha);
+		list($day, $month, $year) = explode("/", $fecha);		
+		if ($year==$year_ingresar){	
+			$nids[] = $times['entity_id'];
+		}
+	}
+
+	$contador = 0;
+	$regs = db_select('aicia_import_apunte','n')
+			->fields('n')
+			->condition('field_processed',0)
+		->execute();
+				
+	$contado = $regs->rowCount();
+		
+	$i=0;
+	$limit = 100;	
+	while ($contador < $contado) {
+  
+		$row = $regs->fetchAssoc();
+		$contador += 1;
+		if ($i < $limit) {
+			$items[] = $row;
+			$i += 1;
+		} else {
+			csvImporter_create_nodes($items,$type);
+			$items = array();
+			$items[] = $row;		
+			$i = 1;
+		}      
+	}
+	csvImporter_create_nodes($items,$type);    	
+}
+	
+}
+
+function csvImport_borrar_cron() {
+
+  $type = 'apunte';
+
+  $header = array('field_num_equip_apunt', 'field_fech_apunte', 'field_num_apunte', 'field_fech_intro', 'field_num_proyecto', 'field_cuenta', 'field_descrip_apunte', 'field_debe', 'field_haber', 'field_prorrata');
+  
+    $infotabla = db_select('aicia_import_apunte','n')
+					->fields('n', array('field_fech_apunte','field_processed'))
+					->execute();
+	$info = $infotabla->fetchAssoc();
+	
+	if($info['field_processed']==0){
+		$timestamp = db_select('field_data_field_fech_apunte','n')
+					->fields('n', array('field_fech_apunte_value','entity_id'))
+					->execute();
+					
+		list($dayin, $monthin, $yearin) = explode("/", $info['field_fech_apunte']);
+		$year_ingresar="20{$yearin}";
+	
+		//$nids[] = array();
+		While($times = $timestamp->fetchAssoc()){
+			$fecha = strtotime('+1 day', $times['field_fech_apunte_value']);
+			$fecha = gmdate("d/m/Y", $fecha);
+			list($day, $month, $year) = explode("/", $fecha);		
+			if ($year==$year_ingresar){	
+				$nids[] = $times['entity_id'];
+			}
+		}
+
+	
+		//if (count($nids)>0){
+		csvBorrar_datos($nids,$header);
+		//}
+    	
+	}
+	
+}
+
+function csvImporter_batch_finished($success, $results, $operations) {
+  if ($success) {
+    // Here we do something meaningful with the results.
+    $message = t('%nodes nodes processed', array('%nodes' => count($results)));
+    watchdog('aicia_import', '%nodes nodes processed', array('%nodes' => count($results)), WATCHDOG_NOTICE);
+  }
+  else {
+    // An error occurred.
+    // $operations contains the operations that remained unprocessed.
+    $error_operation = reset($operations);
+    $message = t('An error occurred while processing %error_operation with arguments: @arguments', array('%error_operation' => $error_operation[0], '@arguments' => print_r($error_operation[1], TRUE)));
+  }
+
+  drupal_set_message($message);
+}
