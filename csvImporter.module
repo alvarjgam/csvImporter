@@ -347,10 +347,7 @@ function csvImporter_get_file_data($url, $type, $year_datos,$header,$ahora) {
 		->execute();
 	
   	While($times = $timestamp->fetchAssoc()){
-  		$fecha = strtotime('+1 day', $times['field_fech_apunte_value']);
-  		$fecha = gmdate("d/m/Y", $fecha);
-  		list($day, $month, $year) = explode("/", $fecha);
-  		//drupal_set_message("field_data_{$times['field_fech_apunte_value']}");		
+  		$year = substr($times['field_fech_apunte_value'], 0, 4);
   		if ($year==$year_datos){	
 			$nids[] = $times['entity_id'];
 			$contado = count($nids);
@@ -608,10 +605,17 @@ function csvImporter_create_nodes($items = array(), $type = '') {
       		if (in_array($key, array('field_fech_apunte','field_fech_intro','field_fech_faccli','field_fech_facpro','field_fech_alta','field_fech_baja'))){
 			if ($value == NULL){  
 				$value = date('d/m/Y', time());
-			}			
+			}
+			if (in_array($key, array('field_fech_apunte'))){
+			list($day, $month, $year) = explode("/", $value);
+			$value = "$month/$day/$year";
+			$fech_timestamp = strtotime($value);
+			$node->{$key}[$node->language][0]['value'] = date('Y-m-d\T00:00:00', $fech_timestamp);
+			}else{
 			list($day, $month, $year) = explode("/", $value);
 			$value = "$month/$day/$year";
 			$node->{$key}[$node->language][0]['value'] = strtotime($value);
+			}
       		}
       		else if (!in_array($key, array('id', 'field_processed', 'nid', 'md5','field_proyectos_persona'))) {
 			if ($value == NULL){  
