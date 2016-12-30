@@ -147,7 +147,7 @@ DEFINE("SALDO_NUEVO", 24);
 		if(count($line) != 8 && $type == 'saldo'){
             	form_set_error('csvfile', t('This file has the incorrect number of columns. Expecting 8'));
             	}
-		if(count($line) != 12 && $type == 'facpro'){
+		if(count($line) != 13 && $type == 'facpro'){
             	form_set_error('csvfile', t('This file has the incorrect number of columns. Expecting 12'));
             	}
 
