@@ -629,6 +629,25 @@ function csvImporter_create_nodes($items = array(), $type = '') {
 				}
 				$node->{$key}[$node->language][0]['value'] = $value;	
 			}
+			if (in_array($key, array('field_proyectos_persona'))){
+				if ($value != NULL){
+				$delta = 0;
+				$rows = explode("-", $item['field_proyectos_persona']);
+				$i=0;	
+				while ($rows[$i]){
+					$cols = explode("|", $rows[$i]);
+					$j=0;
+					while ($cols[$j]){
+						$node->{$key}[$node->language][$delta]['row'] = $i + 1;
+						$node->{$key}[$node->language][$delta]['col'] = $j + 1;
+						$node->{$key}[$node->language][$delta]['value'] = $cols[$j];
+						$j++;
+						$delta++;
+					}
+					$i++;
+				}				
+				}
+			}
 		}
 	
 	//En el caso de que sea un saldo tenemos que actualizar el estado para mostrar el último.
@@ -638,7 +657,7 @@ function csvImporter_create_nodes($items = array(), $type = '') {
 	}
 	
 	//No guardar el nodo si está vacio.
-	if ((strlen($item['field_nomb_proy']) > 0)||(strlen($item['field_num_apunte']) > 0)||(strlen($item['field_num_faccli']) > 0)||(strlen($item['field_num_facpro']) > 0)||(strlen($item	['field_nombre_persona']) > 0)){
+	if ((strlen($item['field_nomb_proy']) > 0)||(strlen($item['field_num_apunte']) > 0)||(strlen($item['field_num_faccli']) > 0)||(strlen($item['field_num_facpro']) > 0)||(strlen($item['field_nombre_persona']) > 0)){
     		$node = node_submit($node);
     		node_save($node);
 	}
