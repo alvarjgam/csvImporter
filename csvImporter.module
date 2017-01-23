@@ -650,7 +650,7 @@ function csvImporter_create_nodes($items = array(), $type = '') {
 			}
 		}
 	
-	//En el caso de que sea un saldo tenemos que actualizar el estado para mostrar el último.
+	//En el caso de que sea un saldo tenemos que actualizar el estado de los saldos anteriores para que luego solo se muestre el último.
 	if ($type == 'saldo'){
 	$node->{field_workflow_saldo}[$node->language][0]['value'] = SALDO_NUEVO;
 	$proyecto_saldo = $item['field_num_proyecto_saldo'];
