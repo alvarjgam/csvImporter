@@ -213,7 +213,7 @@ DEFINE("SALDO_NUEVO", 24);
       break;
 
     case 'persona':
-      $header = array('field_num_equip_persona', 'field_fech_alta', 'field_fech_baja', 'field_nombre_persona', 'field_nif_persona', 'field_titulacion_persona', 	'field_categoria_persona','field_doctor_persona','field_confidencial_persona','field_proyectos_persona','field_fecha_persona');
+      $header = array('field_num_equip_persona', 'field_fech_alta', 'field_fech_baja', 'field_nombre_persona', 'field_nif_persona', 'field_titulacion_persona', 'field_categoria_persona','field_doctor_persona','field_confidencial_persona','field_proyectos_persona','field_fecha_persona');
       break;
 	
     }
@@ -603,42 +603,61 @@ function csvImporter_create_nodes($items = array(), $type = '') {
     
     	foreach ($item as $key => $value) {
       		if (in_array($key, array('field_fech_apunte','field_fech_intro','field_fech_faccli','field_fech_facpro','field_fech_alta','field_fech_baja'))){
-			if ($value == NULL){  
-				$value = date('d/m/Y', time());
-			}
-			if (in_array($key, array('field_fech_apunte'))){
-			list($day, $month, $year) = explode("/", $value);
-			$value = "$month/$day/$year";
-			$fech_timestamp = strtotime($value);
-			$node->{$key}[$node->language][0]['value'] = date('Y-m-d\T00:00:00', $fech_timestamp);
-			}else{
-			list($day, $month, $year) = explode("/", $value);
-			$value = "$month/$day/$year";
-			$node->{$key}[$node->language][0]['value'] = strtotime($value);
-			}
+				if ($value == NULL){  
+					$value = date('d/m/Y', time());
+				}
+				if (in_array($key, array('field_fech_apunte'))){
+					list($day, $month, $year) = explode("/", $value);
+					$value = "$month/$day/$year";
+					$fech_timestamp = strtotime($value);
+					$node->{$key}[$node->language][0]['value'] = date('Y-m-d\T00:00:00', $fech_timestamp);
+				}else{
+					list($day, $month, $year) = explode("/", $value);
+					$value = "$month/$day/$year";
+					$node->{$key}[$node->language][0]['value'] = strtotime($value);
+				}
       		}
       		else if (!in_array($key, array('id', 'field_processed', 'nid', 'md5','field_proyectos_persona'))) {
-			if ($value == NULL){  
-				$value = "ND";
-			}
-       			$node->{$key}[$node->language][0]['value'] = $value;
+					if ($value == NULL){  
+						$value = "ND";
+					}
+					$node->{$key}[$node->language][0]['value'] = $value;
       		}
-		if (in_array($key, array('field_num_proyecto'))){
-			if ($value == NULL){  
-				$value = '0';
+			if (in_array($key, array('field_num_proyecto'))){
+				if ($value == NULL){  
+					$value = '0';
+				}
+				$node->{$key}[$node->language][0]['value'] = $value;	
 			}
-	   		$node->{$key}[$node->language][0]['value'] = $value;	
+			if (in_array($key, array('field_proyectos_persona'))){
+				if ($value != NULL){
+				$delta = 0;
+				$rows = explode("-", $item['field_proyectos_persona']);
+				$i=0;	
+				while ($rows[$i]){
+					$cols = explode("|", $rows[$i]);
+					$j=0;
+					while ($cols[$j]){
+						$node->{$key}[$node->language][$delta]['row'] = $i + 1;
+						$node->{$key}[$node->language][$delta]['col'] = $j + 1;
+						$node->{$key}[$node->language][$delta]['value'] = $cols[$j];
+						$j++;
+						$delta++;
+					}
+					$i++;
+				}				
+				}
+			}
 		}
-	}
 	
-	//En el caso de que sea un saldo tenemos que actualizar el estado para mostrar el último.
+	//En el caso de que sea un saldo tenemos que actualizar el estado de los saldos anteriores para que luego solo se muestre el último.
 	if ($type == 'saldo'){
 	$node->{field_workflow_saldo}[$node->language][0]['value'] = SALDO_NUEVO;
 	$proyecto_saldo = $item['field_num_proyecto_saldo'];
 	}
 	
 	//No guardar el nodo si está vacio.
-	if ((strlen($item['field_nomb_proy']) > 0)||(strlen($item['field_num_apunte']) > 0)||(strlen($item['field_num_faccli']) > 0)||(strlen($item['field_num_facpro']) > 0)||(strlen($item	['field_nombre_persona']) > 0)){
+	if ((strlen($item['field_nomb_proy']) > 0)||(strlen($item['field_num_apunte']) > 0)||(strlen($item['field_num_faccli']) > 0)||(strlen($item['field_num_facpro']) > 0)||(strlen($item['field_nombre_persona']) > 0)){
     		$node = node_submit($node);
     		node_save($node);
 	}
@@ -655,7 +674,6 @@ function csvImporter_create_nodes($items = array(), $type = '') {
 	}
 
   }
-//}
 
 /**
  * Implementation of hook_cronapi()
