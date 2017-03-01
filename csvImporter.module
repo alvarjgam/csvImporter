@@ -758,7 +758,7 @@ if($importar){
 }
 	
 }
-
+//
 function csvImport_borrar_cron() {
 
   $type = 'apunte';
