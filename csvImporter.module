@@ -435,49 +435,35 @@ function csvImporter_get_file_data($url, $type, $year_datos,$header,$ahora) {
   }
 }
 
-//Borra los datos identificados en $nids. 
+///Borra los datos identificados en $nids. 
 function csvBorrar_datos($nids,$header, $type){	
 	$contador = 0;
 	$contado = count($nids);
     if ($type != 'saldo'){
-	    while ($contador < $contado) {
-		db_delete('node_access')
-			->condition('nid',$nids[$contador])
-			->execute();
-			$contador += 1;
-		}
 
-		$contador = 0;
-		while ($contador < $contado) {
+		db_delete('node_access')
+			->condition('nid',$nids, 'IN')
+			->execute();
+
 		db_delete('node_revision')
-			->condition('nid',$nids[$contador])
+			->condition('nid',$nids)
 			->execute();
-		$contador += 1;
-		}
-		$contador = 0;
-		while ($contador < $contado) {
+
 		db_delete('node')
-			->condition('nid',$nids[$contador])
+			->condition('nid',$nids, 'IN')
 			->execute();
-		$contador += 1;	
-		}		
+		
 		for ($i = 0; $i < count($header); $i++){
-		$contador = 0;
-		while ($contador < $contado) {
+
 		db_delete("field_data_{$header[$i]}")
-			->condition('entity_id',$nids[$contador])
+			->condition('entity_id',$nids, 'IN')
 			->execute();
-		$contador += 1;			
-		}
 		}		
 		for ($i = 0; $i < count($header); $i++){
-		$contador = 0;			
-		while ($contador < $contado) {
+
 		db_delete("field_revision_{$header[$i]}")
 			//->condition('entity_id',$nids[$contador])
-			->execute();
-		$contador += 1;			
-		}		
+			->execute();		
         }
 	}else{
 		$tabla_update = "field_data_field_workflow_saldo";
@@ -758,7 +744,7 @@ if($importar){
 }
 	
 }
-//
+
 function csvImport_borrar_cron() {
 
   $type = 'apunte';
